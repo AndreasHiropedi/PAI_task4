@@ -44,8 +44,10 @@ class Critic(nn.Module):
         # the critic receives a batch of observations and a batch of actions
         # of shape (batch_size x obs_size) and batch_size x action_size) respectively
         # and output a batch of values of shape (batch_size x 1)
-        
-        value = torch.zeros(x.shape[0], 1, device=x.device)
+
+        # concatenates observations and the action take together
+        inputs = torch.cat([x, a], dim=-1)
+        value = self.net(inputs)
 
         #####################################################################
         return value
@@ -73,10 +75,10 @@ class Actor(nn.Module):
         # the actor will receive a batch of observations of shape (batch_size x obs_size)
         # and output a batch of actions of shape (batch_size x action_size)
 
-        action = torch.zeros(x.shape[0], self.action_scale.shape[-1], device=x.device)
+        action = torch.tanh(self.net(x))
+        return action * self.action_scale + self.action_bias
 
         #####################################################################
-        return action
 
 
 class Agent:
@@ -88,6 +90,9 @@ class Agent:
     #########################################################################
     # TODO: store and tune hyperparameters here
 
+    learning_rate = 1e-3
+    num_layers = 2
+    num_units = 256
     batch_size: int = 256
     gamma: float = 0.99  # MDP discount factor, 
     exploration_noise: float = 0.1  # epsilon for epsilon-greedy exploration
@@ -104,7 +109,13 @@ class Agent:
         self.action_high = torch.tensor(env.action_space.high).float()
 
         #####################################################################
-        # TODO: initialize actor, critic and attributes
+        # TODOish: initialize actor, critic and attributes
+
+        self.critic = Critic(self.obs_size, self.action_size, self.num_layers, self.num_units).to(self.device)
+        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=self.learning_rate)
+
+        self.actor = Actor(self.action_low, self.action_high, self.obs_size, self.action_size, self.num_layers, self.num_units).to(self.device)
+        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=self.learning_rate)
 
         #####################################################################
         # create buffer
@@ -120,6 +131,33 @@ class Agent:
         #####################################################################
         # TODO: code training logic
 
+        obs = torch.tensor(obs,dtype=torch.float32)
+        action = torch.tensor(action,dtype=torch.float32)
+        next_obs = torch.tensor(next_obs,dtype=torch.float32)
+        done = torch.tensor(done,dtype=torch.float32).unsqueeze(1)
+        reward = torch.tensor(reward,dtype=torch.float32).unsqueeze(1)
+
+        with torch.no_grad():
+            next_action = self.actor.forward(next_obs)
+            target_q_values = self.critic.forward(next_obs,next_action)
+            target_q_values = reward + (1 - done) * self.gamma * target_q_values
+
+        current_q_values = self.critic(obs,action)
+        
+        critic_loss = nn.MSELoss()(current_q_values, target_q_values)
+        self.critic_optimizer.zero_grad()
+        critic_loss.backward()
+        self.critic_optimizer.step()
+
+        # Update Actor
+        self.actor.optimizer.zero_grad()
+
+        actor_loss = -self.critic(obs, self.actor(obs)).mean()
+        actor_loss.backward()
+        self.actor.optimizer.step()
+
+
+
         #####################################################################
 
     def get_action(self, obs, train):
@@ -131,12 +169,23 @@ class Agent:
         # TODO: return the agent's action for an observation (np.array
         # of shape (obs_size, )). The action should be a np.array of
         # shape (act_size, )
+        #####################################################################
+
+        obs = torch.tensor(obs, device=self.device).float().unsqueeze(0)
+
 
         with torch.no_grad():
-            action = np.zeros((self.action_size,))
+            # gets action from actor - squeeze reshapes - cpu changes to run on cpu
+            action = self.actor(obs).squeeze(0).cpu().numpy()
+
+        # if we are training, we want to add random noise
+        if train:
+            # exploration noise is from epsilon greedy
+            action += self.exploration_noise * np.random.randn(self.action_size)
         
-        #####################################################################
-        return action
+        # makes sure action is within bounds
+        return np.clip(action, self.action_low.cpu().numpy(), self.action_high.cpu().numpy())
+
 
     def store(self, transition):
         '''
