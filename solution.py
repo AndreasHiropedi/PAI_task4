@@ -131,11 +131,11 @@ class Agent:
         #####################################################################
         # TODO: code training logic
 
-        obs = torch.tensor(obs,dtype=torch.float32)
-        action = torch.tensor(action,dtype=torch.float32)
-        next_obs = torch.tensor(next_obs,dtype=torch.float32)
-        done = torch.tensor(done,dtype=torch.float32).unsqueeze(1)
-        reward = torch.tensor(reward,dtype=torch.float32).unsqueeze(1)
+        obs = obs.clone().detach().float()
+        action = action.clone().detach().float()
+        next_obs = next_obs.clone().detach().float()
+        done = done.clone().detach().float().unsqueeze(1)
+        reward = reward.clone().detach().float().unsqueeze(1)
 
         with torch.no_grad():
             next_action = self.actor.forward(next_obs)
@@ -150,11 +150,11 @@ class Agent:
         self.critic_optimizer.step()
 
         # Update Actor
-        self.actor.optimizer.zero_grad()
+        self.actor_optimizer.zero_grad()
 
         actor_loss = -self.critic(obs, self.actor(obs)).mean()
         actor_loss.backward()
-        self.actor.optimizer.step()
+        self.actor_optimizer.step()
 
 
 
