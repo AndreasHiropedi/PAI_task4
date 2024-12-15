@@ -96,6 +96,7 @@ class Agent:
     batch_size: int = 256
     gamma: float = 0.99  # MDP discount factor, 
     exploration_noise: float = 0.1  # epsilon for epsilon-greedy exploration
+    tau: float = 0.005
     
     #########################################################################
 
@@ -121,7 +122,20 @@ class Agent:
         # create buffer
         self.buffer = ReplayBuffer(self.buffer_size, self.obs_size, self.action_size, self.device)
         self.train_step = 0
+        
+        # create targegt networks
+        self.actor_target = Actor(self.action_low, self.action_high, self.obs_size, self.action_size, self.num_layers, self.num_units).to(self.device)
+        self.critic_target = Critic(self.obs_size, self.action_size, self.num_layers, self.num_units).to(self.device)
+        #intialize them
+        self.actor_target.load_state_dict(self.actor.state_dict())
+        self.critic_target.load_state_dict(self.critic.state_dict())
     
+    
+    def soft_update(self, source_network, target_network, tau):
+        for target_param, param in zip(target_network.parameters(), source_network.parameters()):
+            target_param.data.copy_(tau * param.data + (1.0 - tau) * target_param.data)
+
+
     def train(self):
         '''
         Updates actor and critic with one batch from the replay buffer.
@@ -138,8 +152,8 @@ class Agent:
         reward = reward.clone().detach().float().unsqueeze(1)
 
         with torch.no_grad():
-            next_action = self.actor.forward(next_obs)
-            target_q_values = self.critic.forward(next_obs,next_action)
+            next_action = self.actor_target(next_obs)
+            target_q_values = self.critic_target(next_obs,next_action)
             target_q_values = reward + (1 - done) * self.gamma * target_q_values
 
         current_q_values = self.critic(obs,action)
@@ -155,6 +169,9 @@ class Agent:
         actor_loss = -self.critic(obs, self.actor(obs)).mean()
         actor_loss.backward()
         self.actor_optimizer.step()
+        
+        self.soft_update(self.actor, self.actor_target, self.tau)
+        self.soft_update(self.critic, self.critic_target, self.tau)
 
 
 
